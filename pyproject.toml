@@ -1,0 +1,48 @@
+[project]
+name = "databricks-mcp-server"
+version = "0.1.0"
+description = "MCP server for Databricks workspace integration with Claude Code"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+keywords = ["databricks", "mcp", "claude", "pyspark", "data-engineering"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "databricks-sdk>=0.20.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+azure = ["azure-identity>=1.15.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+databricks-mcp = "databricks_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/databricks_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
