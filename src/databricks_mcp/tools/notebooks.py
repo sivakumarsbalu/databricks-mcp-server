@@ -15,6 +15,14 @@ from databricks.sdk.service.workspace import (
 )
 
 from ..config import get_client
+from ..validation import (
+    validate_workspace_path,
+    validate_string,
+    validate_boolean,
+    validate_language,
+    validate_export_format,
+    InputValidator,
+)
 
 
 def register_notebook_tools(server: Server):
@@ -186,6 +194,12 @@ async def list_notebooks(arguments: dict[str, Any]) -> list[TextContent]:
     client = get_client()
     path = arguments.get("path", "/")
 
+    # Validate path
+    result = validate_workspace_path(path, "path")
+    if not result.is_valid:
+        return [TextContent(type="text", text=f"Error: {result.error_message}")]
+    path = result.sanitized_value
+
     objects = list(client.workspace.list(path=path))
 
     result = []
@@ -206,7 +220,13 @@ async def list_notebooks(arguments: dict[str, Any]) -> list[TextContent]:
 async def read_notebook(arguments: dict[str, Any]) -> list[TextContent]:
     """Read the content of a notebook."""
     client = get_client()
-    path = arguments["path"]
+    path = arguments.get("path")
+
+    # Validate path
+    result = validate_workspace_path(path, "path")
+    if not result.is_valid:
+        return [TextContent(type="text", text=f"Error: {result.error_message}")]
+    path = result.sanitized_value
 
     export_response = client.workspace.export(path=path, format=ExportFormat.SOURCE)
 
@@ -221,10 +241,21 @@ async def create_notebook(arguments: dict[str, Any]) -> list[TextContent]:
     """Create a new notebook."""
     client = get_client()
 
-    path = arguments["path"]
-    language_str = arguments.get("language", "PYTHON")
-    content = arguments["content"]
-    overwrite = arguments.get("overwrite", False)
+    # Validate inputs
+    validator = InputValidator()
+    validator.validate(validate_workspace_path(arguments.get("path"), "path"), "path")
+    validator.validate(validate_string(arguments.get("content"), "content", min_length=0, max_length=10_000_000), "content")
+    validator.validate(validate_language(arguments.get("language", "PYTHON"), "language"), "language")
+    validator.validate(validate_boolean(arguments.get("overwrite"), "overwrite", required=False, default=False), "overwrite")
+
+    if not validator.is_valid():
+        return [TextContent(type="text", text=f"Error: {validator.get_error_message()}")]
+
+    sanitized = validator.get_sanitized()
+    path = sanitized["path"]
+    content = sanitized["content"]
+    language_str = sanitized["language"]
+    overwrite = sanitized["overwrite"]
 
     # Map string to Language enum
     language_map = {
@@ -280,8 +311,23 @@ async def delete_notebook(arguments: dict[str, Any]) -> list[TextContent]:
     """Delete a notebook or folder."""
     client = get_client()
 
-    path = arguments["path"]
-    recursive = arguments.get("recursive", False)
+    # Validate inputs
+    path_result = validate_workspace_path(arguments.get("path"), "path")
+    if not path_result.is_valid:
+        return [TextContent(type="text", text=f"Error: {path_result.error_message}")]
+    path = path_result.sanitized_value
+
+    recursive_result = validate_boolean(arguments.get("recursive"), "recursive", required=False, default=False)
+    recursive = recursive_result.sanitized_value
+
+    # Additional safety check for recursive deletes
+    if recursive:
+        # Warn about recursive delete in root or high-level paths
+        if path in ('/', '/Workspace', '/Users', '/Repos', '/Shared'):
+            return [TextContent(
+                type="text",
+                text=f"Error: Recursive delete is not allowed on system path '{path}'"
+            )]
 
     client.workspace.delete(path=path, recursive=recursive)
 

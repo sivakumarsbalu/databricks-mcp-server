@@ -312,6 +312,106 @@ Try being more specific:
 
 ---
 
+## Security Configuration (v0.2.0+)
+
+The server includes enterprise-grade security features to protect your data.
+
+### Environment Profiles
+
+Set the `DATABRICKS_MCP_PROFILE` environment variable to configure security defaults:
+
+| Profile | Description | Default Behavior |
+|---------|-------------|------------------|
+| `development` | For local development | All tools enabled, minimal restrictions |
+| `staging` | For testing environments | Safe mode on, code execution disabled |
+| `production` | For production use | **Read-only mode**, all destructive operations blocked |
+
+```json
+{
+  "env": {
+    "DATABRICKS_HOST": "https://your-workspace.cloud.databricks.com",
+    "DATABRICKS_TOKEN": "dapi...",
+    "DATABRICKS_MCP_PROFILE": "production"
+  }
+}
+```
+
+### Security Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DATABRICKS_MCP_PROFILE` | Environment profile | `development`, `staging`, `production` |
+| `DATABRICKS_MCP_READ_ONLY` | Enable read-only mode | `true` or `false` |
+| `DATABRICKS_MCP_SAFE_MODE` | Block destructive SQL/operations | `true` or `false` |
+| `DATABRICKS_MCP_ALLOW_CODE_EXECUTION` | Allow arbitrary code execution | `true` or `false` |
+| `DATABRICKS_MCP_ALLOW_SQL_EXECUTION` | Allow arbitrary SQL execution | `true` or `false` |
+| `DATABRICKS_MCP_ALLOWED_TOOLS` | Comma-separated list of allowed tools | `databricks_list_tables,databricks_preview_table` |
+| `DATABRICKS_MCP_BLOCKED_TOOLS` | Comma-separated list of blocked tools | `databricks_delete_notebook,databricks_dbfs_delete` |
+| `DATABRICKS_MCP_MAX_SQL_ROWS` | Maximum rows returned from SQL queries | `1000` |
+
+### Security Modes
+
+**Read-Only Mode** (`DATABRICKS_MCP_READ_ONLY=true`)
+- Only read operations are allowed (list, get, describe, preview)
+- All write, delete, and execute operations are blocked
+
+**Safe Mode** (`DATABRICKS_MCP_SAFE_MODE=true`)
+- Destructive SQL operations (DROP, DELETE, TRUNCATE) are blocked
+- Destructive file/notebook operations require additional checks
+- Recursive deletes on system paths are prevented
+
+### Tool Risk Levels
+
+Tools are classified by risk level:
+
+| Risk Level | Description | Examples |
+|------------|-------------|----------|
+| 🟢 **SAFE** | Read-only operations | `list_clusters`, `describe_table`, `preview_table` |
+| 🟡 **MODERATE** | Write operations with limited impact | `create_notebook`, `start_cluster` |
+| 🟠 **DESTRUCTIVE** | Operations that delete data | `delete_notebook`, `dbfs_delete` |
+| 🔴 **CRITICAL** | Arbitrary code/SQL execution | `execute_code`, `execute_sql` |
+
+### Audit Logging
+
+All tool invocations are logged with:
+- Timestamp and correlation ID
+- Tool name, operation type, and risk level
+- Sanitized arguments (sensitive data redacted)
+- Execution time and result status
+- Workspace host
+
+Logs are output in JSON format for easy integration with log aggregation systems.
+
+### SQL Query Validation
+
+In safe mode, SQL queries are validated before execution:
+- ✅ Allowed: `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`
+- ❌ Blocked: `DROP`, `DELETE`, `TRUNCATE`, `INSERT`, `UPDATE`, `ALTER`, `CREATE`
+
+### Example: Production-Safe Configuration
+
+```json
+{
+  "mcpServers": {
+    "databricks": {
+      "command": "python",
+      "args": ["-m", "databricks_mcp.server"],
+      "cwd": "/path/to/databricks-mcp-server/src",
+      "env": {
+        "DATABRICKS_HOST": "https://prod.cloud.databricks.com",
+        "DATABRICKS_TOKEN": "dapi...",
+        "DATABRICKS_MCP_PROFILE": "production",
+        "DATABRICKS_MCP_READ_ONLY": "true",
+        "DATABRICKS_MCP_SAFE_MODE": "true",
+        "DATABRICKS_MCP_ALLOWED_TOOLS": "databricks_list_clusters,databricks_list_tables,databricks_describe_table,databricks_preview_table,databricks_list_catalogs,databricks_list_schemas,databricks_search_tables,databricks_get_query_history"
+      }
+    }
+  }
+}
+```
+
+---
+
 ## Security Notes
 
 **Keep your token safe!**
@@ -325,6 +425,7 @@ Try being more specific:
 - Only data YOU have permission to see in Databricks
 - It uses YOUR credentials, so it has the same access as you do
 - It cannot access anything you couldn't access by logging into Databricks yourself
+- In read-only mode, write and delete operations are blocked at the server level
 
 ---
 

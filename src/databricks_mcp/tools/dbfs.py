@@ -8,6 +8,7 @@ from mcp.server import Server
 from mcp.types import Tool, TextContent
 
 from ..config import get_client
+from ..validation import validate_dbfs_path, validate_boolean, validate_integer
 
 
 def register_dbfs_tools(server: Server):
@@ -226,8 +227,23 @@ async def dbfs_delete(arguments: dict[str, Any]) -> list[TextContent]:
     """Delete a file or directory from DBFS."""
     client = get_client()
 
-    path = arguments["path"]
-    recursive = arguments.get("recursive", False)
+    # Validate path
+    path_result = validate_dbfs_path(arguments.get("path"), "path")
+    if not path_result.is_valid:
+        return [TextContent(type="text", text=f"Error: {path_result.error_message}")]
+    path = path_result.sanitized_value
+
+    recursive_result = validate_boolean(arguments.get("recursive"), "recursive", required=False, default=False)
+    recursive = recursive_result.sanitized_value
+
+    # Safety check for recursive deletes on high-level paths
+    if recursive:
+        dangerous_paths = ['/', '/mnt', '/FileStore', '/databricks', '/user']
+        if path in dangerous_paths or any(path.rstrip('/') == dp for dp in dangerous_paths):
+            return [TextContent(
+                type="text",
+                text=f"Error: Recursive delete is not allowed on system path '{path}'"
+            )]
 
     client.dbfs.delete(path=path, recursive=recursive)
 

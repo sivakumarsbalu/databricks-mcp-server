@@ -1,5 +1,6 @@
 """Unity Catalog tools for Databricks MCP Server."""
 
+import asyncio
 import json
 from typing import Any
 
@@ -361,11 +362,34 @@ async def describe_table(arguments: dict[str, Any]) -> list[TextContent]:
 
 async def preview_table(arguments: dict[str, Any]) -> list[TextContent]:
     """Preview sample data from a table."""
+    from ..security import PathValidator
+
     client = get_client()
 
     full_name = arguments["full_name"]
     limit = arguments.get("limit", 10)
     warehouse_id = arguments.get("warehouse_id") or databricks.get_default_warehouse_id()
+
+    # Validate table name to prevent SQL injection
+    validator = PathValidator()
+    is_valid, reason = validator.validate_table_name(full_name)
+    if not is_valid:
+        return [
+            TextContent(
+                type="text",
+                text=f"Error: Invalid table name - {reason}",
+            )
+        ]
+
+    # Validate and sanitize limit
+    try:
+        limit = int(limit)
+        if limit < 1:
+            limit = 1
+        elif limit > 1000:
+            limit = 1000
+    except (ValueError, TypeError):
+        limit = 10
 
     if not warehouse_id:
         return [
@@ -375,11 +399,12 @@ async def preview_table(arguments: dict[str, Any]) -> list[TextContent]:
             )
         ]
 
-    # Execute preview query
-    query = f"SELECT * FROM {full_name} LIMIT {limit}"
+    # Execute preview query with validated/sanitized inputs
+    # Using identifier quoting for additional safety
+    query = f"SELECT * FROM `{full_name.replace('`', '``')}` LIMIT {limit}"
 
     from databricks.sdk.service.sql import StatementState
-    import time
+    import asyncio
 
     statement = client.statement_execution.execute_statement(
         warehouse_id=warehouse_id,
@@ -387,7 +412,7 @@ async def preview_table(arguments: dict[str, Any]) -> list[TextContent]:
         wait_timeout="30s",
     )
 
-    # Wait for completion
+    # Wait for completion using async sleep to not block the event loop
     max_wait = 30
     waited = 0
     while statement.status and statement.status.state in [
@@ -396,7 +421,7 @@ async def preview_table(arguments: dict[str, Any]) -> list[TextContent]:
     ]:
         if waited >= max_wait:
             return [TextContent(type="text", text="Query timed out")]
-        time.sleep(1)
+        await asyncio.sleep(1)
         waited += 1
         statement = client.statement_execution.get_statement(
             statement_id=statement.statement_id

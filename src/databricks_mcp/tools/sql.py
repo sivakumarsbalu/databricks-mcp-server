@@ -1,7 +1,7 @@
 """SQL warehouse tools for Databricks MCP Server."""
 
+import asyncio
 import json
-import time
 from typing import Any
 
 from mcp.server import Server
@@ -9,7 +9,8 @@ from mcp.types import Tool, TextContent
 
 from databricks.sdk.service.sql import StatementState
 
-from ..config import get_client, databricks
+from ..config import get_client, databricks, get_security_config
+from ..security import SQLQueryValidator
 
 
 def register_sql_tools(server: Server):
@@ -226,12 +227,28 @@ async def stop_warehouse(arguments: dict[str, Any]) -> list[TextContent]:
 async def execute_sql(arguments: dict[str, Any]) -> list[TextContent]:
     """Execute a SQL query and return results."""
     client = get_client()
+    security = get_security_config()
 
     query = arguments["query"]
     warehouse_id = arguments.get("warehouse_id") or databricks.get_default_warehouse_id()
     catalog = arguments.get("catalog")
     schema = arguments.get("schema")
     max_rows = arguments.get("max_rows", 1000)
+
+    # Apply max rows limit from security config
+    max_rows = min(max_rows, security.max_sql_result_rows)
+
+    # Validate query in safe mode
+    if security.safe_mode:
+        validator = SQLQueryValidator()
+        is_allowed, reason = validator.validate_for_safe_mode(query)
+        if not is_allowed:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Error: {reason}",
+                )
+            ]
 
     if not warehouse_id:
         return [
@@ -251,7 +268,7 @@ async def execute_sql(arguments: dict[str, Any]) -> list[TextContent]:
         wait_timeout="50s",
     )
 
-    # Wait for completion if still pending
+    # Wait for completion if still pending (using async sleep to not block event loop)
     max_wait = 60  # seconds
     waited = 0
     while statement.status and statement.status.state in [
@@ -265,7 +282,7 @@ async def execute_sql(arguments: dict[str, Any]) -> list[TextContent]:
                     text=f"Query still running after {max_wait}s. Statement ID: {statement.statement_id}",
                 )
             ]
-        time.sleep(2)
+        await asyncio.sleep(2)
         waited += 2
         statement = client.statement_execution.get_statement(
             statement_id=statement.statement_id
@@ -318,7 +335,7 @@ async def explain_sql(arguments: dict[str, Any]) -> list[TextContent]:
         wait_timeout="30s",
     )
 
-    # Wait for completion
+    # Wait for completion (using async sleep to not block event loop)
     max_wait = 30
     waited = 0
     while statement.status and statement.status.state in [
@@ -327,7 +344,7 @@ async def explain_sql(arguments: dict[str, Any]) -> list[TextContent]:
     ]:
         if waited >= max_wait:
             break
-        time.sleep(1)
+        await asyncio.sleep(1)
         waited += 1
         statement = client.statement_execution.get_statement(
             statement_id=statement.statement_id
